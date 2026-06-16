@@ -189,5 +189,84 @@ def version() -> None:
     console.print(f"coffer-cli {__version__}")
 
 
+@app.command(name="install-skill")
+def install_skill(
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            help="Override install location. Defaults to ~/.claude/skills/",
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite an existing skill of the same name."),
+    ] = False,
+) -> None:
+    """Install the `coffer-cost-review` Claude Code skill to ~/.claude/skills/.
+
+    After install, open Claude Code and ask: "review my LLM costs".
+    """
+    import shutil
+    from importlib import resources
+
+    dest_root = target or (Path.home() / ".claude" / "skills")
+    dest = dest_root / "coffer-cost-review"
+
+    if dest.exists() and not force:
+        console.print(
+            f"[yellow]Skill already installed at {dest}[/yellow]\n"
+            "Re-install with: [cyan]coffer install-skill --force[/cyan]"
+        )
+        raise typer.Exit(0)
+
+    try:
+        bundle = resources.files("coffer_cli") / "_skill_files" / "coffer-cost-review"
+    except (ModuleNotFoundError, FileNotFoundError) as exc:
+        console.print(f"[red]Skill files not bundled with this build:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    dest_root.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir()
+
+    copied: list[str] = []
+    for entry in bundle.iterdir():
+        if not entry.is_file():
+            continue
+        target_path = dest / entry.name
+        target_path.write_bytes(entry.read_bytes())
+        copied.append(entry.name)
+
+    console.print(
+        f"[green]✓ Installed skill to[/green] [cyan]{dest}[/cyan]\n"
+        f"  Files: {', '.join(copied)}\n\n"
+        "Open Claude Code and ask: [bold]'review my LLM costs'[/bold]"
+    )
+
+
+@app.command(name="uninstall-skill")
+def uninstall_skill(
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            help="Override skill location. Defaults to ~/.claude/skills/",
+        ),
+    ] = None,
+) -> None:
+    """Remove the coffer-cost-review skill from ~/.claude/skills/."""
+    import shutil
+
+    dest_root = target or (Path.home() / ".claude" / "skills")
+    dest = dest_root / "coffer-cost-review"
+    if not dest.exists():
+        console.print(f"[yellow]Skill not installed at {dest}[/yellow]")
+        raise typer.Exit(0)
+    shutil.rmtree(dest)
+    console.print(f"[green]✓ Removed[/green] {dest}")
+
+
 if __name__ == "__main__":
     app()

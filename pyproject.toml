@@ -1,6 +1,6 @@
 [project]
 name = "coffer-cli"
-version = "0.1.1"
+version = "0.1.2"
 description = "Scan codebases for LLM cost-waste anti-patterns. Find retry storms, missing prompt caching, unbounded conversation history, agent loops without iteration caps, and more — before you ship."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -58,6 +58,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/coffer_cli"]
+# Bundle the skill files into the wheel so `coffer install-skill` can copy
+# them to the user's ~/.claude/skills/ directory.
+artifacts = ["src/coffer_cli/_skill_files/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

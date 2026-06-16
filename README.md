@@ -20,6 +20,7 @@ coffer scan ./my-app
 coffer scan ./my-app --json     # for CI / Claude Code skill consumption
 coffer prices                    # current model pricing table
 coffer compare gpt-4o gpt-4o-mini
+coffer install-skill             # install the Claude Code skill (see below)
 ```
 
 ## What it catches (v0.1.0)
@@ -55,13 +56,16 @@ combines this scanner with Claude's semantic judgment. In Claude Code, ask
     works, public endpoints without rate limit, ...)
 4. Produce a severity-ranked review with concrete code-diff fixes
 
-Install:
+Install (bundled with the CLI):
 
 ```bash
-git clone https://github.com/neal-c611/coffer-cli
-mkdir -p ~/.claude/skills
-cp -r coffer-cli/skills/coffer-cost-review ~/.claude/skills/
+pipx install coffer-cli       # if you don't have it yet
+coffer install-skill          # copies the skill to ~/.claude/skills/
 ```
+
+Then open Claude Code and ask *"review my LLM costs"*.
+
+To uninstall: `coffer uninstall-skill`.
 
 ## What it deliberately does NOT do
 
