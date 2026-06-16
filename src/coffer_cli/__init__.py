@@ -1,3 +1,3 @@
-"""coffer-cli — shift-left LLM cost scanner."""
+"""coffer-cli — LLM cost-waste anti-pattern scanner."""
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
