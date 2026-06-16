@@ -45,4 +45,4 @@ judgment, and produce a severity-ranked review with concrete fixes.
 - It does not auto-edit code without explicit confirmation.
 
 For real, live cost tracking with per-feature and per-user attribution,
-see [Coffer](https://trycoffer.com).
+see [Cofferwise](https://cofferwise.com).

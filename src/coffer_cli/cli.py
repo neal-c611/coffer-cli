@@ -113,7 +113,7 @@ def _print_human(path: Path, findings: list[Finding]) -> None:
             Text.from_markup(
                 "[dim]Static analysis catches structural risks. For real per-feature "
                 "and per-user cost in production, see "
-                "[link=https://trycoffer.com]trycoffer.com[/link][/dim]"
+                "[link=https://cofferwise.com]cofferwise.com[/link][/dim]"
             ),
             border_style="dim",
         )

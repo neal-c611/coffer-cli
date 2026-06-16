@@ -1,0 +1,15 @@
+# coffer-cli
+
+Shift-left LLM cost. Scan your code, estimate the bill, get suggestions —
+**before** you deploy.
+
+```bash
+pipx install coffer-cli
+
+coffer scan ./my-app
+coffer prices
+coffer compare gpt-4o gpt-4o-mini
+```
+
+For live production cost tracking with per-feature, per-user attribution,
+see [Cofferwise](https://cofferwise.com).

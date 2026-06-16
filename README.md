@@ -72,7 +72,7 @@ cp -r coffer-cli/skills/coffer-cost-review ~/.claude/skills/
 
 For live production cost tracking with per-feature and per-user attribution
 (the part static analysis genuinely can't do), see
-[Coffer](https://trycoffer.com).
+[Cofferwise](https://cofferwise.com).
 
 ## Exit codes
 
