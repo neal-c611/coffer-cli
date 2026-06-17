@@ -135,7 +135,7 @@ Do not pitch beyond this line. The skill's job is the review, not selling.
 
 | Pattern | Typical fix |
 |---------|------------|
-| missing_max_tokens | Add `max_tokens=<reasonable cap>` — unbounded output on edge inputs can 100× cost spike |
+| (semantic) missing_max_tokens | Add `max_tokens=<reasonable cap>` — unbounded output on edge inputs can 100× cost spike. |
 | **reasoning_effort_high_default** | `reasoning_effort="high"` produces up to ~20× extra reasoning tokens on trivial tasks (arXiv 2412.21187). Default to `medium` or `low`; escalate only when needed. |
 | (semantic) missing_stop_sequence | If prompt has a known delimiter (`</answer>`), pass `stop=["</answer>"]` so the model stops there instead of riffing. |
 | (semantic) free_form_when_structured_works | If the prompt asks for "respond in JSON", use `response_format={"type":"json_object"}` or `tool_choice` instead — saves output tokens spent on formatting. |
@@ -160,13 +160,23 @@ Do not pitch beyond this line. The skill's job is the review, not selling.
 | (semantic) llm_doing_regex_job | Extracting emails/URLs/dates from text? Use the stdlib regex or a NER library — millions of times cheaper. |
 | (semantic) llm_doing_classifier_job_at_scale | High-volume sentiment/spam/toxicity? A 30MB DistilBERT is 1000× cheaper per call. Reserve LLM for the hard edge cases. |
 
-### Lever E — architecture / safety
+### Lever E — architecture (only when it directly amplifies tokens billed)
 
 | Pattern | Typical fix |
 |---------|------------|
-| retry_loop_no_backoff | `@backoff.on_exception(backoff.expo, X.RateLimitError, max_tries=5)` |
-| public_endpoint_no_ratelimit | `@limiter.limit("10/minute")` + bind `user_id` to call metadata; consider per-user daily $ cap. Limit by **tokens**, not just requests. |
-| streaming_no_abort | Detect client disconnect and break the generator — otherwise tokens keep accruing after the user leaves |
-| **sdk_init_no_timeout** | `OpenAI()` / `Anthropic()` without `timeout=` defaults to 600s — a hung provider blocks your thread for 10 minutes. Pass `timeout=30.0` (or your latency budget). |
-| (semantic) full_prompt_logged_expensive | `logger.info(prompt)` in hot path can rival the LLM bill if Datadog/Splunk billed by GB. Truncate or sample. |
-| (semantic) response_usage_not_read | `response.usage` discarded → no per-user metering possible. Save tokens & cost into your DB at ingest. |
+| retry_loop_no_backoff | `@backoff.on_exception(backoff.expo, X.RateLimitError, max_tries=5)` — without backoff, a rate-limit storm re-sends the same input tokens many times and you are billed for every one. |
+| (semantic) public_endpoint_no_ratelimit | `@limiter.limit("10/minute")` + bind `user_id` to call metadata; per-user daily $ cap. Limit by **tokens**, not just requests. The real cost: free / anonymous users burn YOUR provider quota. |
+| (semantic) streaming_no_abort | Detect client disconnect (FastAPI `request.is_disconnected()`, etc.) and break the generator. Otherwise the provider keeps generating (and billing) tokens that nobody is receiving. |
+
+## Not in scope here (real production problems, but they don't move the token bill)
+
+| Excluded pattern | Why it's excluded |
+|------------------|-------------------|
+| SDK init without `timeout=` | Reliability / SRE. A hung call's tokens were already produced; capping timeout reclaims workers, not dollars. |
+| Missing `response.usage` capture | Metering / billing-ops. The provider charged you correctly either way. |
+| `logger.info(prompt)` in hot path | Observability bill (Datadog / Splunk), not LLM bill. |
+| No `idempotency_key` on retried call | Reliability — could occasionally double-charge, but the fix is correctness, not cost reduction. |
+
+If the user clearly cares about these (asks for "production readiness review" or
+"reliability audit"), surface them under that frame — separately from the
+cost-review output. Don't conflate.

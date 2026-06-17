@@ -334,26 +334,7 @@ def test_reasoning_effort_high(tmp_path: Path) -> None:
     assert any(f.pattern == "reasoning_effort_high_default" for f in findings)
 
 
-def test_sdk_init_no_timeout(tmp_path: Path) -> None:
-    _write(tmp_path, "client.py", "client = OpenAI(api_key='sk-...')\n")
-    findings = find_patterns(tmp_path)
-    f = next(f for f in findings if f.pattern == "sdk_init_no_timeout")
-    assert f.severity == "high"
-
-
-def test_sdk_init_with_timeout_ok(tmp_path: Path) -> None:
-    _write(tmp_path, "client.py", "client = OpenAI(api_key='sk-...', timeout=30.0)\n")
-    findings = find_patterns(tmp_path)
-    assert all(f.pattern != "sdk_init_no_timeout" for f in findings)
-
-
-def test_sdk_anthropic_no_timeout(tmp_path: Path) -> None:
-    _write(tmp_path, "client.py", "client = Anthropic()\n")
-    findings = find_patterns(tmp_path)
-    assert any(f.pattern == "sdk_init_no_timeout" for f in findings)
-
-
-def test_async_sdk_no_timeout(tmp_path: Path) -> None:
-    _write(tmp_path, "client.py", "client = AsyncOpenAI(api_key='sk-...')\n")
-    findings = find_patterns(tmp_path)
-    assert any(f.pattern == "sdk_init_no_timeout" for f in findings)
+# sdk_init_no_timeout was removed — that's a reliability finding, not a cost one.
+# Adding `timeout=` doesn't reduce the OpenAI / Anthropic bill (a hung call's
+# tokens were already counted when the LLM produced them). It belongs in a
+# separate production-readiness review, not in cost-review.

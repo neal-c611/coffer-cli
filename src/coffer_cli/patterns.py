@@ -1,8 +1,12 @@
 """Static detection of LLM cost-waste anti-patterns.
 
+Every detector here must answer "yes" to: **does fixing this reduce dollars
+billed by the LLM provider?** Reliability / SRE / metering issues that
+don't change the token bill belong in a separate review.
+
 We aim for low false-positive rate over completeness. A finding should
 be defensible: a reviewer who reads the snippet should agree it's a
-real risk in most cases.
+real cost risk in most cases.
 
 Detector catalog (by cost lever):
 
@@ -11,17 +15,18 @@ Detector catalog (by cost lever):
     dynamic_before_static_cache    HIGH  f-string interpolation in system message breaks auto-cache
     unbounded_conversation_history MED   `messages.append(...)` without truncation
   Lever B — output tokens
-    missing_max_tokens             MED   LLM call without `max_tokens` cap
     reasoning_effort_high_default  MED   `reasoning_effort="high"` literal
-  Lever C — price per token
-    (semantic — handled in skill, not CLI)
   Lever D — number of calls
     llm_in_for_loop                MED   N× cost; Batch API / merged prompt are fixes
     agent_loop_no_max_iter         HIGH  `while True:` containing LLM call without iter cap
     temperature_nonzero_with_cache MED   `temperature > 0` next to a cache hint — silently breaks it
-  Lever E — architecture / safety
-    retry_loop_no_backoff          HIGH  Retry storm risk
-    sdk_init_no_timeout            HIGH  SDK initialized without `timeout=`
+  Lever E — architecture (only when it directly amplifies tokens billed)
+    retry_loop_no_backoff          HIGH  Retry storm re-bills the same input tokens
+
+Out of scope (real problems, but not cost waste):
+  - SDK without timeout      → worker exhaustion, not token bill
+  - Missing metering         → can't bill customers, but the provider charge is the same
+  - Logging full prompts     → Datadog / Splunk bill, not OpenAI / Anthropic bill
 """
 
 from __future__ import annotations
@@ -155,17 +160,6 @@ _REASONING_EFFORT_HIGH_RE = re.compile(
     r"""reasoning_effort \s* = \s* ['"]high['"]""",
     re.VERBOSE,
 )
-
-_SDK_INIT_RE = re.compile(
-    r"""
-    \b
-    (OpenAI | AsyncOpenAI | Anthropic | AsyncAnthropic)
-    \(
-    """,
-    re.VERBOSE,
-)
-
-_TIMEOUT_KW_RE = re.compile(r"\btimeout\s*=")
 
 _TEMPERATURE_RE = re.compile(r"\btemperature\s*=\s*([0-9]*\.?[0-9]+)")
 
@@ -586,48 +580,6 @@ def _detect_reasoning_effort_high_default(
     return findings
 
 
-def _detect_sdk_init_no_timeout(path: Path, lines: list[str]) -> list[Finding]:
-    """`OpenAI()` / `Anthropic()` constructed without `timeout=`."""
-    findings: list[Finding] = []
-    for i, line in enumerate(lines):
-        m = _SDK_INIT_RE.search(line)
-        if not m:
-            continue
-        # Look at the next ~5 lines too in case the kwargs span lines.
-        end = min(i + 5, len(lines))
-        joined = "\n".join(lines[i:end])
-        # Locate the close paren of this constructor.
-        depth = 0
-        start_pos = joined.index(m.group(0)) + len(m.group(0))
-        body = ""
-        for ch in joined[start_pos:]:
-            body += ch
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                if depth == 0:
-                    break
-                depth -= 1
-
-        if _TIMEOUT_KW_RE.search(body):
-            continue
-        findings.append(
-            Finding(
-                severity="high",
-                pattern="sdk_init_no_timeout",
-                path=path,
-                line=i + 1,
-                snippet=line.strip()[:200],
-                suggestion=(
-                    f"`{m.group(1)}` initialized without `timeout=`. Default is 600s — a hung "
-                    "provider can block your thread for ten minutes. Pass an explicit timeout "
-                    "(e.g. `timeout=30.0`) sized to your user-facing latency budget."
-                ),
-            )
-        )
-    return findings
-
-
 # ---- top-level --------------------------------------------------------------
 
 
@@ -663,7 +615,6 @@ def find_patterns(
         findings.extend(_detect_agent_loop_no_max_iter(path, lines))
         findings.extend(_detect_temperature_nonzero_with_cache_hint(path, lines))
         findings.extend(_detect_reasoning_effort_high_default(path, lines))
-        findings.extend(_detect_sdk_init_no_timeout(path, lines))
 
     severity_order = {"high": 0, "medium": 1, "low": 2}
     findings.sort(key=lambda f: (severity_order[f.severity], str(f.path), f.line))

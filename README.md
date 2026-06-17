@@ -23,25 +23,43 @@ coffer compare gpt-4o gpt-4o-mini
 coffer install-skill             # install the Claude Code skill (see below)
 ```
 
-## What it catches (v0.1.0)
+## What it catches (v0.2.0)
 
-Detectors are organized by the four levers that drive LLM cost:
+Every detector here passes one test: **does fixing it reduce dollars billed
+by the LLM provider?** Reliability, observability, and metering issues that
+don't move the token bill are deliberately excluded (see "Not in scope" below).
 
 | Lever | Detector | Severity |
 |-------|----------|----------|
 | **A: input tokens** | `dynamic_before_static_cache_break` — f-string interpolation in `SYSTEM_PROMPT` defeats OpenAI auto-cache and Anthropic `cache_control` | 🚨 high |
 | | `unbounded_conversation_history` — `messages.append(...)` without truncation or summarization | 🟡 med |
 | | `uncached_large_prompt` — ≥2,000-char hardcoded prompt without nearby `cache_control` | 🟡 med |
-| **B: output tokens** | `missing_max_tokens` — LLM call without a `max_tokens` cap | 🟡 med |
-| | `reasoning_effort_high_default` — `reasoning_effort="high"` literal (up to ~20× extra reasoning tokens on trivial tasks) | 🟡 med |
+| **B: output tokens** | `reasoning_effort_high_default` — `reasoning_effort="high"` literal (up to ~20× extra reasoning tokens on trivial tasks) | 🟡 med |
 | **D: number of calls** | `llm_in_for_loop` — N× cost; gather is a latency fix, not a cost fix | 🟡 med |
 | | `agent_loop_no_max_iter` — `while True:` containing an LLM call without an iteration cap (the $47K-incident pattern) | 🚨 high |
 | | `temperature_nonzero_with_cache_hint` — cache layer nearby but `temperature > 0` silently breaks it | 🟡 med |
-| **E: architecture** | `retry_loop_no_backoff` — retry storm amplifies the bill 10× | 🚨 high |
-| | `sdk_init_no_timeout` — default 600s lets a hung provider block your thread | 🚨 high |
+| **E: architecture** | `retry_loop_no_backoff` — retry storm re-bills the same input tokens, can amplify spend 10× | 🚨 high |
 
 Each finding includes a concrete fix and explains the *cost* angle
 explicitly (we do not conflate latency fixes with cost fixes).
+
+### Not in scope (production-readiness, not cost-review)
+
+These are real problems but `coffer scan` deliberately doesn't flag them —
+fixing them doesn't change the token bill, and conflating them with cost
+findings makes both reviews less useful:
+
+- **SDK init without `timeout=`** — worker exhaustion / availability issue.
+  The tokens for a hung call were already produced; capping timeout reclaims
+  threads, not dollars.
+- **Missing `response.usage` capture** — metering / billing-ops issue. The
+  provider charged you correctly either way.
+- **`logger.info(prompt)` on hot path** — observability bill (Datadog /
+  Splunk), not LLM bill.
+- **Missing `idempotency_key`** — correctness / occasional double-charge,
+  but the fix is reliability engineering, not cost reduction.
+
+A separate "production-readiness" review skill is the right home for those.
 
 ## Use with Claude Code (the skill)
 

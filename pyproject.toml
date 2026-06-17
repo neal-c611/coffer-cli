@@ -1,6 +1,6 @@
 [project]
 name = "coffer-cli"
-version = "0.1.2"
+version = "0.2.0"
 description = "Scan codebases for LLM cost-waste anti-patterns. Find retry storms, missing prompt caching, unbounded conversation history, agent loops without iteration caps, and more — before you ship."
 readme = "README.md"
 requires-python = ">=3.10"
