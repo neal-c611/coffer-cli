@@ -1,7 +1,7 @@
 [project]
 name = "coffer-cli"
-version = "0.2.0"
-description = "Scan codebases for LLM cost-waste anti-patterns. Find retry storms, missing prompt caching, unbounded conversation history, agent loops without iteration caps, and more — before you ship."
+version = "0.3.0"
+description = "DEPRECATED. The cost-review scanner now lives in the coffer-cost-review npm package as a Claude Code skill (semantic, low-false-positive). This Python package still installs the skill from PyPI and exposes a pricing-table lookup, but no longer ships the static scanner."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

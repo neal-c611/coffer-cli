@@ -1,123 +1,143 @@
-"""CLI entry point — scan / prices / compare."""
+"""CLI entry point.
+
+v0.3.0 — the static `coffer scan` command has been removed. The
+cost-review work moved to the `coffer-cost-review` npm package, which
+ships a Claude Code skill that reads the codebase semantically. The
+commands here are now:
+
+  coffer install-skill   download the cost-review skill and copy it to
+                         ~/.claude/skills/ (no Node required — fetches
+                         the published npm tarball directly).
+  coffer prices          show per-model pricing.
+  coffer compare A B     per-call + monthly cost compare of two models.
+  coffer version         print version.
+"""
 
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import tarfile
+import tempfile
+import urllib.request
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 from coffer_cli import __version__
 from coffer_cli._pricing import MODEL_PRICING, compute_cost
-from coffer_cli.patterns import Finding, find_patterns
 
 app = typer.Typer(
     name="coffer",
-    help="LLM cost utility. Scan code for cost-waste anti-patterns, "
-    "look up model pricing, compare cost between models.",
+    help=(
+        "Coffer CLI. As of v0.3, scanning lives in the coffer-cost-review "
+        "Claude Code skill (install via npm or via `coffer install-skill`). "
+        "This CLI now hosts a few small utilities — pricing lookup, model "
+        "comparison, and the skill installer."
+    ),
     no_args_is_help=True,
     add_completion=False,
 )
 console = Console()
 
-
-_SEVERITY_STYLE = {
-    "high": ("red", "🚨"),
-    "medium": ("yellow", "🟡"),
-    "low": ("blue", "🔵"),
-}
+NPM_TARBALL_URL = "https://registry.npmjs.org/coffer-cost-review/-/coffer-cost-review-{version}.tgz"
+SKILL_LATEST_VERSION = "0.1.0"  # bump when downstream npm package bumps
 
 
-@app.command()
-def scan(
-    path: Annotated[
-        Path,
-        typer.Argument(help="Directory or file to scan. Defaults to current directory."),
-    ] = Path("."),
-    json_output: Annotated[
-        bool,
+@app.command(name="install-skill")
+def install_skill(
+    target: Annotated[
+        Path | None,
         typer.Option(
-            "--json",
-            help="Emit JSON for programmatic consumption (e.g. CI, Claude Code skill).",
+            "--target",
+            help="Override install location. Defaults to ~/.claude/skills/",
         ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite an existing skill of the same name."),
     ] = False,
-    severity: Annotated[
+    skill_version: Annotated[
         str,
-        typer.Option("--min-severity", help="Filter: high | medium | low"),
-    ] = "low",
+        typer.Option(
+            "--skill-version",
+            help="npm package version of coffer-cost-review to fetch.",
+        ),
+    ] = SKILL_LATEST_VERSION,
 ) -> None:
-    """Find LLM cost-waste anti-patterns: retry storms, loops without batching,
-    large uncached prompts, etc.
+    """Install the coffer-cost-review Claude Code skill from npm.
 
-    We deliberately do NOT estimate dollar cost — static analysis can't know
-    call volume. We find structural risks that founder review would have caught.
+    No Node / npm required — fetches the npm tarball directly over HTTPS.
     """
-    if not path.exists():
-        console.print(f"[red]Path not found:[/red] {path}")
-        raise typer.Exit(1)
+    dest_root = target or (Path.home() / ".claude" / "skills")
+    dest = dest_root / "coffer-cost-review"
 
-    findings = find_patterns(path)
+    if dest.exists() and not force:
+        console.print(
+            f"[yellow]Skill already installed at {dest}[/yellow]\n"
+            "Re-install with: [cyan]coffer install-skill --force[/cyan]"
+        )
+        raise typer.Exit(0)
 
-    threshold = {"high": 0, "medium": 1, "low": 2}.get(severity.lower(), 2)
-    findings = [f for f in findings if {"high": 0, "medium": 1, "low": 2}[f.severity] <= threshold]
+    url = NPM_TARBALL_URL.format(version=skill_version)
+    console.print(f"Downloading {url} ...")
 
-    if json_output:
-        typer.echo(json.dumps([f.to_dict() for f in findings], indent=2))
-        raise typer.Exit(0 if not findings else 0)
+    with tempfile.TemporaryDirectory() as tmp:
+        tarball = Path(tmp) / "skill.tgz"
+        try:
+            urllib.request.urlretrieve(url, tarball)  # noqa: S310
+        except Exception as exc:
+            console.print(f"[red]Download failed:[/red] {exc}")
+            raise typer.Exit(1) from exc
 
-    _print_human(path, findings)
-    if any(f.severity == "high" for f in findings):
-        raise typer.Exit(1)  # non-zero for CI gating on HIGH
+        with tarfile.open(tarball, "r:gz") as tar:
+            tar.extractall(tmp, filter="data")  # type: ignore[arg-type]
 
+        skill_src = Path(tmp) / "package" / "skill"
+        if not skill_src.exists():
+            console.print(f"[red]Bundled skill not found in tarball at {skill_src}[/red]")
+            raise typer.Exit(1)
 
-def _print_human(path: Path, findings: list[Finding]) -> None:
-    console.print(f"\nScanning [cyan]{path.resolve()}[/cyan]...")
+        dest_root.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            shutil.rmtree(dest)
+        dest.mkdir()
 
-    if not findings:
-        console.print("\n[green]✓ No cost-waste anti-patterns detected.[/green]\n")
-        return
-
-    counts = {"high": 0, "medium": 0, "low": 0}
-    for f in findings:
-        counts[f.severity] += 1
+        copied: list[str] = []
+        for entry in skill_src.iterdir():
+            if entry.is_file():
+                shutil.copy2(entry, dest / entry.name)
+                copied.append(entry.name)
 
     console.print(
-        f"\nFound [bold]{len(findings)}[/bold] cost-risk findings: "
-        f"[red]{counts['high']} high[/red] · "
-        f"[yellow]{counts['medium']} medium[/yellow] · "
-        f"[blue]{counts['low']} low[/blue]\n"
+        f"\n[green]✓ Installed skill to[/green] [cyan]{dest}[/cyan]\n"
+        f"  Files: {', '.join(copied)}\n\n"
+        "Open Claude Code and ask: [bold]'review my LLM costs'[/bold]\n"
+        "\nLive runtime cost tracking: [cyan]https://cofferwise.com[/cyan]"
     )
 
-    table = Table(show_lines=True)
-    table.add_column("", width=3)
-    table.add_column("Where", style="cyan", no_wrap=False)
-    table.add_column("Pattern", style="magenta")
-    table.add_column("Suggestion", style="white")
 
-    for f in findings:
-        color, emoji = _SEVERITY_STYLE[f.severity]
-        table.add_row(
-            f"[{color}]{emoji}[/{color}]",
-            f"{f.path}:{f.line}\n[dim]{f.snippet}[/dim]",
-            f.pattern,
-            f.suggestion,
-        )
-    console.print(table)
-
-    console.print(
-        Panel(
-            Text.from_markup(
-                "[dim]Static analysis catches structural risks. For real per-feature "
-                "and per-user cost in production, see "
-                "[link=https://cofferwise.com]cofferwise.com[/link][/dim]"
-            ),
-            border_style="dim",
-        )
-    )
+@app.command(name="uninstall-skill")
+def uninstall_skill(
+    target: Annotated[
+        Path | None,
+        typer.Option(
+            "--target",
+            help="Override skill location. Defaults to ~/.claude/skills/",
+        ),
+    ] = None,
+) -> None:
+    """Remove the coffer-cost-review skill from ~/.claude/skills/."""
+    dest_root = target or (Path.home() / ".claude" / "skills")
+    dest = dest_root / "coffer-cost-review"
+    if not dest.exists():
+        console.print(f"[yellow]Skill not installed at {dest}[/yellow]")
+        raise typer.Exit(0)
+    shutil.rmtree(dest)
+    console.print(f"[green]✓ Removed[/green] {dest}")
 
 
 @app.command()
@@ -172,100 +192,20 @@ def compare(
         delta_pct = round((1 - monthly_b / monthly_a) * 100)
         if delta_pct > 0:
             console.print(
-                f"\n[green]{model_b}[/green] is "
-                f"[bold]{delta_pct}%[/bold] cheaper than [magenta]{model_a}[/magenta] "
-                f"at this volume."
+                f"\n[green]{model_b}[/green] is [bold]{delta_pct}%[/bold] cheaper "
+                f"than [magenta]{model_a}[/magenta] at this volume."
             )
         else:
             console.print(
-                f"\n[yellow]{model_b}[/yellow] is "
-                f"[bold]{-delta_pct}%[/bold] more expensive than {model_a}."
+                f"\n[yellow]{model_b}[/yellow] is [bold]{-delta_pct}%[/bold] more "
+                f"expensive than {model_a}."
             )
 
 
 @app.command()
 def version() -> None:
     """Print the version."""
-    console.print(f"coffer-cli {__version__}")
-
-
-@app.command(name="install-skill")
-def install_skill(
-    target: Annotated[
-        Path | None,
-        typer.Option(
-            "--target",
-            help="Override install location. Defaults to ~/.claude/skills/",
-        ),
-    ] = None,
-    force: Annotated[
-        bool,
-        typer.Option("--force", "-f", help="Overwrite an existing skill of the same name."),
-    ] = False,
-) -> None:
-    """Install the `coffer-cost-review` Claude Code skill to ~/.claude/skills/.
-
-    After install, open Claude Code and ask: "review my LLM costs".
-    """
-    import shutil
-    from importlib import resources
-
-    dest_root = target or (Path.home() / ".claude" / "skills")
-    dest = dest_root / "coffer-cost-review"
-
-    if dest.exists() and not force:
-        console.print(
-            f"[yellow]Skill already installed at {dest}[/yellow]\n"
-            "Re-install with: [cyan]coffer install-skill --force[/cyan]"
-        )
-        raise typer.Exit(0)
-
-    try:
-        bundle = resources.files("coffer_cli") / "_skill_files" / "coffer-cost-review"
-    except (ModuleNotFoundError, FileNotFoundError) as exc:
-        console.print(f"[red]Skill files not bundled with this build:[/red] {exc}")
-        raise typer.Exit(1) from exc
-
-    dest_root.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.mkdir()
-
-    copied: list[str] = []
-    for entry in bundle.iterdir():
-        if not entry.is_file():
-            continue
-        target_path = dest / entry.name
-        target_path.write_bytes(entry.read_bytes())
-        copied.append(entry.name)
-
-    console.print(
-        f"[green]✓ Installed skill to[/green] [cyan]{dest}[/cyan]\n"
-        f"  Files: {', '.join(copied)}\n\n"
-        "Open Claude Code and ask: [bold]'review my LLM costs'[/bold]"
-    )
-
-
-@app.command(name="uninstall-skill")
-def uninstall_skill(
-    target: Annotated[
-        Path | None,
-        typer.Option(
-            "--target",
-            help="Override skill location. Defaults to ~/.claude/skills/",
-        ),
-    ] = None,
-) -> None:
-    """Remove the coffer-cost-review skill from ~/.claude/skills/."""
-    import shutil
-
-    dest_root = target or (Path.home() / ".claude" / "skills")
-    dest = dest_root / "coffer-cost-review"
-    if not dest.exists():
-        console.print(f"[yellow]Skill not installed at {dest}[/yellow]")
-        raise typer.Exit(0)
-    shutil.rmtree(dest)
-    console.print(f"[green]✓ Removed[/green] {dest}")
+    console.print(f"coffer-cli {__version__}  (skill: coffer-cost-review {SKILL_LATEST_VERSION})")
 
 
 if __name__ == "__main__":
